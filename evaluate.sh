@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 nvidia-smi
 
-cd /data/zhangyuhan/bert-nmt
+cd /data/zhangyuhan/project
 python3 -c "import torch; print(torch.__version__)"
 
 src=en
@@ -11,7 +11,7 @@ ARCH=transformer_s2_iwslt_de_en
 DATAPATH=data-bin/iwslt14.tokenized.en-de
 SAVEDIR=checkpoints/iwed_${src}_${tgt}_${bedropout}
 
-CUDA_VISIBLE_DEVICES=6 python generate.py $DATAPATH \
+CUDA_VISIBLE_DEVICES=7 python generate.py $DATAPATH \
     --path $SAVEDIR/checkpoint_best.pt \
     --bert-model-name bert-base-uncased \
     --batch-size 128 --beam 5 --remove-bpe | tee -a $SAVEDIR/testing.log
