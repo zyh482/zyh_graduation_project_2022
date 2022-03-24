@@ -39,3 +39,15 @@ pip install --editable .
     ```
   bash evaluate.sh
   ```
+
+## 参考文献
+```'
+@inproceedings{
+Zhu2020Incorporating,
+title={Incorporating BERT into Neural Machine Translation},
+author={Jinhua Zhu and Yingce Xia and Lijun Wu and Di He and Tao Qin and Wengang Zhou and Houqiang Li and Tieyan Liu},
+booktitle={International Conference on Learning Representations},
+year={2020},
+url={https://openreview.net/forum?id=Hyl7ygStwB}
+}
+```
