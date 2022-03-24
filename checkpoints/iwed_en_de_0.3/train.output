@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "train.py", line 19, in <module>
+    from fairseq import checkpoint_utils, distributed_utils, options, progress_bar, tasks, utils
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/__init__.py", line 11, in <module>
+    import fairseq.criterions
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/criterions/__init__.py", line 26, in <module>
+    importlib.import_module('fairseq.criterions.' + module)
+  File "/Users/zhangyuhan/.pyenv/versions/3.7.1/lib/python3.7/importlib/__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/criterions/masked_lm_loss.py", line 13, in <module>
+    from fairseq import utils
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/utils.py", line 20, in <module>
+    from fairseq.modules import gelu, gelu_accurate
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/modules/__init__.py", line 11, in <module>
+    from .character_token_embedder import CharacterTokenEmbedder
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/modules/character_token_embedder.py", line 16, in <module>
+    from fairseq.data import Dictionary
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/data/__init__.py", line 8, in <module>
+    from .dictionary import Dictionary, TruncatedDictionary
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/data/dictionary.py", line 15, in <module>
+    from fairseq.binarizer import safe_readline
+  File "/Users/zhangyuhan/workingspace/bert-nmt/fairseq/binarizer.py", line 12, in <module>
+    from bert import BertTokenizer
+  File "/Users/zhangyuhan/workingspace/bert-nmt/bert/__init__.py", line 1, in <module>
+    from .tokenization import BasicTokenizer, BertTokenizer
+  File "/Users/zhangyuhan/workingspace/bert-nmt/bert/tokenization.py", line 25, in <module>
+    from .file_utils import cached_path
+  File "/Users/zhangyuhan/workingspace/bert-nmt/bert/file_utils.py", line 20, in <module>
+    import boto3
+ModuleNotFoundError: No module named 'boto3'
