@@ -13,14 +13,14 @@ pip install --editable .
 
 
 ## 快速启动
+**运行脚本前注意检查路径**
 - ### 下载数据集
     ```
   cd examples/translation
   bash prepare-iwslt14.sh
   ```
 - ### 数据预处理
-    运行makedataforbert.sh前注意修改路径
-    ```
+  ```
   bash makedataforbert.sh en|de
   cd ../..
   TEXT=examples/translation/iwslt14.tokenized.de-en
@@ -29,19 +29,26 @@ pip install --editable .
   --destdir data-bin/iwslt14.tokenized.en-de --joined-dictionary \
   --bert-model-name bert-base-uncased
   ```
-- ### 训练模型
-  运行前注意修改路径
-    ```
-  bash entrypoint.sh
+- ### 训练bert-nmt
+  ```
+  bash model-entrypoint.sh
   ```
 - ### 模型评估
-  运行前注意修改路径
-    ```
+  ```
   bash evaluate.sh
   ```
+- ### 梯度下降求sentence-recover-bias
+  ```
+  bash sample-entrypoint.sh
+  ```
+- ### 训练project-model
+  ```
+  bash project-entrypoint.sh
+  ```
+
 
 ## 参考文献
-```'
+```
 @inproceedings{
 Zhu2020Incorporating,
 title={Incorporating BERT into Neural Machine Translation},
