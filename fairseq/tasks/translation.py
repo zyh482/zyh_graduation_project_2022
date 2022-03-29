@@ -46,7 +46,7 @@ def load_langpair_dataset(
             bertprefix = os.path.join(data_path, '{}.bert.{}-{}.'.format(split_k, src, tgt))
         elif split_exists(split_k, tgt, src, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
-            bertprefix =  os.path.join(data_path, '{}.bert.{}-{}.'.format(split_k, tgt, src))
+            bertprefix = os.path.join(data_path, '{}.bert.{}-{}.'.format(split_k, tgt, src))
         else:
             if k > 0:
                 break
@@ -152,6 +152,8 @@ class TranslationTask(FairseqTask):
 
         # options for
         parser.add_argument('--fix-transformer', action='store_true')
+        parser.add_argument('--train-mode', default='model',
+                            help="train model parameters if mode='model'; gradient descent for sample bias if mode='sample'")
 
         # options for reporting BLEU during validation
         # parser.add_argument('--score-reference', default=False)
@@ -177,6 +179,7 @@ class TranslationTask(FairseqTask):
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict
         self.bert_model_name = args.bert_model_name
+        self.bias_save_path = None
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -234,8 +237,9 @@ class TranslationTask(FairseqTask):
             left_pad_target=self.args.left_pad_target,
             max_source_positions=self.args.max_source_positions,
             max_target_positions=self.args.max_target_positions,
-            bert_model_name = self.bert_model_name
+            bert_model_name=self.bert_model_name
         )
+        self.bias_save_path = os.path.join(self.args.sample_savedir, f'{split}.bert.{src}-{tgt}.bias')
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, srcbert, srcbert_sizes, berttokenizer):
         return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary, srcbert=srcbert, srcbert_sizes=srcbert_sizes, berttokenizer=berttokenizer)
@@ -256,7 +260,7 @@ class TranslationTask(FairseqTask):
     def valid_step(self, sample, model, criterion):
         loss, sample_size, logging_output = super().valid_step(sample, model, criterion)
         if self.args.eval_bleu:
-            bleu = self._inference_with_bleu(self.sequence_generator, sample, model)
+            bleu = self.inference_with_bleu(self.sequence_generator, sample, model)
             logging_output["_bleu_sys_len"] = bleu.sys_len
             logging_output["_bleu_ref_len"] = bleu.ref_len
             # we split counts into separate entries so that they can be
@@ -281,7 +285,7 @@ class TranslationTask(FairseqTask):
         """Return the target :class:`~fairseq.data.Dictionary`."""
         return self.tgt_dict
 
-    def _inference_with_bleu(self, generator, sample, model):
+    def inference_with_bleu(self, generator, sample, model, bias=None):
         import sacrebleu
 
         def decode(toks, escape_unk=True):
@@ -300,7 +304,7 @@ class TranslationTask(FairseqTask):
                 s = self.tokenizer.detokenize(s)
             return s
 
-        gen_out = self.inference_step(generator, [model], sample, prefix_tokens=None)
+        gen_out = self.inference_step(generator, [model], sample, bias, prefix_tokens=None)
         hyps, refs = [], []
         for i in range(len(gen_out)):
             hyps.append(decode(gen_out[i][0]["tokens"]))
@@ -314,6 +318,6 @@ class TranslationTask(FairseqTask):
             print("example hypothesis: " + hyps[0])
             print("example reference: " + refs[0])
         if self.args.sacrebleu:
-            return sacrebleu.corpus_bleu(hyps, [refs], tokenize="none")
+            return sacrebleu.corpus_bleu(hyps, [refs], tokenize="none", force=True)
         else:
-            return sacrebleu.corpus_bleu(hyps, [refs])
+            return sacrebleu.corpus_bleu(hyps, [refs], force=True)

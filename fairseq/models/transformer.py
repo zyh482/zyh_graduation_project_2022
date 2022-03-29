@@ -312,7 +312,7 @@ class TransformerS2Model(FairseqEncoderDecoderModel):
     def build_decoder(cls, args, tgt_dict, embed_tokens):
         return TransformerDecoder(args, tgt_dict, embed_tokens)
 
-    def forward(self, src_tokens, src_lengths, prev_output_tokens, bert_input, **kwargs):
+    def forward(self, src_tokens, src_lengths, prev_output_tokens, bert_input, bias=None, **kwargs):
         """
         Run the forward pass for an encoder-decoder model.
 
@@ -336,7 +336,7 @@ class TransformerS2Model(FairseqEncoderDecoderModel):
                 - a dictionary with any model-specific outputs
         """
         bert_encoder_padding_mask = bert_input.eq(self.berttokenizer.pad())
-        bert_encoder_out, _ =  self.bert_encoder(bert_input, output_all_encoded_layers=True, attention_mask=~bert_encoder_padding_mask)
+        bert_encoder_out, _ = self.bert_encoder(bert_input, output_all_encoded_layers=True, attention_mask=~bert_encoder_padding_mask)
         bert_encoder_out = bert_encoder_out[self.bert_output_layer]
         if self.mask_cls_sep:
             bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.cls())
@@ -347,7 +347,7 @@ class TransformerS2Model(FairseqEncoderDecoderModel):
             'bert_encoder_padding_mask': bert_encoder_padding_mask,
         }
         encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, bert_encoder_out=bert_encoder_out)
-        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out, **kwargs)
+        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out, bias=bias, **kwargs)
         return decoder_out
 
 @register_model('transformerstack')
@@ -837,7 +837,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             self.layer_norm = None
 
 
-    def forward(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, incremental_state=None, **unused):
+    def forward(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, bias=None, incremental_state=None, **unused):
         """
         Args:
             prev_output_tokens (LongTensor): previous decoder outputs of shape
@@ -852,11 +852,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 - the decoder's output of shape `(batch, tgt_len, vocab)`
                 - a dictionary with any model-specific outputs
         """
-        x, extra = self.extract_features(prev_output_tokens, encoder_out, bert_encoder_out, incremental_state)
+        x, extra = self.extract_features(prev_output_tokens, encoder_out, bert_encoder_out, bias, incremental_state)
         x = self.output_layer(x)
         return x, extra
 
-    def extract_features(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, incremental_state=None, **unused):
+    def extract_features(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, bias=None, incremental_state=None, **unused):
         """
         Similar to *forward* but only return features.
 
@@ -888,6 +888,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
+        if bias is None:
+            bias = torch.zeros_like(x).to(x.device)
+        assert bias.shape == x.shape or bias.shape == x.shape[-2:], \
+            f'Unmatched bias size {bias.shape}, while x size {x.shape}'
+        x = x + bias
         attn = None
 
         inner_states = [x]
@@ -900,6 +905,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 encoder_out['encoder_padding_mask'] if encoder_out is not None else None,
                 bert_encoder_out['bert_encoder_out'],
                 bert_encoder_out['bert_encoder_padding_mask'],
+                bias,
                 incremental_state,
                 self_attn_mask=self.buffered_future_mask(x) if incremental_state is None else None,
             )
@@ -908,6 +914,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.layer_norm:
             x = self.layer_norm(x)
 
+        x = x + bias
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
 
@@ -1478,6 +1485,7 @@ class TransformerDecoderLayer(nn.Module):
         encoder_padding_mask=None,
         bert_encoder_out=None,
         bert_encoder_padding_mask=None,
+        bias=None,
         incremental_state=None,
         prev_self_attn_state=None,
         prev_attn_state=None,
@@ -1501,6 +1509,7 @@ class TransformerDecoderLayer(nn.Module):
             prev_key, prev_value = prev_self_attn_state
             saved_state = {"prev_key": prev_key, "prev_value": prev_value}
             self.self_attn._set_input_buffer(incremental_state, saved_state)
+
         x, attn = self.self_attn(
             query=x,
             key=x,
@@ -1511,7 +1520,11 @@ class TransformerDecoderLayer(nn.Module):
             attn_mask=self_attn_mask,
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
-        x = residual + x
+
+        if bias is None:
+            bias = torch.zeros_like(x).to(x.device)
+        assert x.shape == bias.shape or bias.shape == x.shape[-2:], f'Unmatched bias shape {bias.shape} with x shape {x.shape}'
+        x = residual + x + bias
         x = self.maybe_layer_norm(self.self_attn_layer_norm, x, after=True)
 
         if self.encoder_attn is not None:

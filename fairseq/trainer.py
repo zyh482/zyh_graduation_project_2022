@@ -345,7 +345,7 @@ class Trainer(object):
             # update meters
             ntokens = logging_output.get('ntokens', 0)
             nsentences = logging_output.get('nsentences', 0)
-            self.meters['wps'].update(ntokens)
+            self.meters['wps'].udate(ntokens)
             self.meters['ups'].update(1.)
             self.meters['wpb'].update(ntokens)
             self.meters['bsz'].update(nsentences)

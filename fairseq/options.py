@@ -24,6 +24,7 @@ def get_training_parser(default_task='translation'):
     add_dataset_args(parser, train=True)
     add_distributed_training_args(parser)
     add_model_args(parser)
+    add_sample_args(parser)
     add_optimization_args(parser)
     add_checkpoint_args(parser)
     add_generation_args(parser)
@@ -301,6 +302,21 @@ def add_distributed_training_args(parser):
     return group
 
 
+def add_sample_args(parser):
+    group = parser.add_argument_group('Optimization')
+    # fmt: off
+    group.add_argument('--split', default='train', type=str,
+                       help='train samples for split_subset, like "train", "valid" and "test".')
+    group.add_argument('--log-epoch-interval', default=25, type=int,
+                       help='update progress for each N epochs')
+    group.add_argument('--sample-savedir',
+                       help='for each batch: {sample, bias, bleu} saved into {savedir}/{split}.bert.{src}-{tgt}.bias.batchid')
+    group.add_argument('--bleu-threshold', default=100.0, type=float,
+                       help='stop training when bleu score gets to threshold')
+    # fmt: on
+    return group
+
+
 def add_optimization_args(parser):
     group = parser.add_argument_group('Optimization')
     # fmt: off
@@ -396,7 +412,7 @@ def add_generation_args(parser):
     group = parser.add_argument_group('Generation')
     add_common_eval_args(group)
     # fmt: off
-    group.add_argument('--eval-bleu', default=False, help='evaluation with BLEU scores')
+    group.add_argument('--eval-bleu', action='store_true', help='evaluation with BLEU scores')
     parser.add_argument('--eval-bleu-detok', default='space',
                         help='detoken before computing BLEU (e.g. "moses"), required if using --eval-bleu;'
                              'use "space" to disable detokenization; see fairseq.data.encoders for other options')
@@ -450,7 +466,7 @@ def add_generation_args(parser):
                        help='if set, uses attention feedback to compute and print alignment to source tokens')
     group.add_argument('--change-ratio', action='store_true')
     parser.add_argument('--eval-bleu-remove-bpe', nargs='?', const='@@ ', default=None, help='remove BPE before computing BLEU')
-    parser.add_argument('--eval-bleu-print-samples', default=False, help='print sample generations during validation')
+    parser.add_argument('--eval-bleu-print-samples', action='store_true', help='print sample generations during validation')
 
     # fmt: on
     return group

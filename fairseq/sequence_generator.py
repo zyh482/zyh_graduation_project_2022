@@ -106,6 +106,7 @@ class SequenceGenerator(object):
         self,
         models,
         sample,
+        bias=None,
         prefix_tokens=None,
         bos_token=None,
         **kwargs
@@ -166,6 +167,8 @@ class SequenceGenerator(object):
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
         new_order = new_order.to(src_tokens.device).long()
         encoder_outs, bert_outs = model.reorder_encoder_out(encoder_outs, bert_outs, new_order)
+        if bias is not None:
+            bias = torch.index_select(bias, 0, new_order)
 
         # initialize buffers
         scores = src_tokens.new(bsz * beam_size, max_len + 1).float().fill_(0)
@@ -324,9 +327,11 @@ class SequenceGenerator(object):
                     reorder_state.view(-1, beam_size).add_(corr.unsqueeze(-1) * beam_size)
                 model.reorder_incremental_state(reorder_state)
                 encoder_outs, bert_outs = model.reorder_encoder_out(encoder_outs, bert_outs, reorder_state)
+                if bias is not None:
+                    bias = torch.index_select(bias, 0, reorder_state)
 
             lprobs, avg_attn_scores = model.forward_decoder(
-                tokens[:, :step + 1], encoder_outs, bert_outs, temperature=self.temperature,
+                tokens[:, :step + 1], encoder_outs, bert_outs, bias, temperature=self.temperature,
             )
 
             lprobs[:, self.pad] = -math.inf  # never select pad
@@ -591,13 +596,14 @@ class EnsembleModel(torch.nn.Module):
         return [model.encoder(**encoder_input) for model in self.models]
 
     @torch.no_grad()
-    def forward_decoder(self, tokens, encoder_outs, bert_outs, temperature=1.):
+    def forward_decoder(self, tokens, encoder_outs, bert_outs, bias, temperature=1.):
         if len(self.models) == 1:
             return self._decode_one(
                 tokens,
                 self.models[0],
                 encoder_outs[0] if self.has_encoder() else None,
                 bert_outs[0],
+                bias,
                 self.incremental_states,
                 log_probs=True,
                 temperature=temperature,
@@ -610,6 +616,7 @@ class EnsembleModel(torch.nn.Module):
                 tokens,
                 model,
                 encoder_out,
+                bias,
                 self.incremental_states,
                 log_probs=True,
                 temperature=temperature,
@@ -626,13 +633,13 @@ class EnsembleModel(torch.nn.Module):
         return avg_probs, avg_attn
 
     def _decode_one(
-        self, tokens, model, encoder_out, bert_out, incremental_states, log_probs,
+        self, tokens, model, encoder_out, bert_out, bias, incremental_states, log_probs,
         temperature=1.,
     ):
         if self.incremental_states is not None:
-            decoder_out = list(model.decoder(tokens, encoder_out, bert_out, incremental_state=self.incremental_states[model]))
+            decoder_out = list(model.decoder(tokens, encoder_out, bert_out, bias, incremental_state=self.incremental_states[model]))
         else:
-            decoder_out = list(model.decoder(tokens, encoder_out, bert_out))
+            decoder_out = list(model.decoder(tokens, encoder_out, bert_out, bias))
         decoder_out[0] = decoder_out[0][:, -1:, :]
         if temperature != 1.:
             decoder_out[0].div_(temperature)
@@ -651,7 +658,7 @@ class EnsembleModel(torch.nn.Module):
         if not self.has_encoder():
             return
         model = self.models[0]
-        encoder_outs, bert_outs = model.encoder.reorder_encoder_out(encoder_outs[0], bert_outs[0], new_order)
+        encoder_outs, bert_outs = model.encoder.re_encoder_out(encoder_outs[0], bert_outs[0], new_order)
         return [encoder_outs], [bert_outs]
 
 
