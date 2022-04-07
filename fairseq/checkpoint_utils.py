@@ -177,6 +177,13 @@ def load_model_ensemble(filenames, arg_overrides=None, task=None, bert_ratio=Non
             args.bert_ratio = bert_ratio
         if encoder_ratio is not None:
             args.encoder_ratio = encoder_ratio
+        if getattr(args, 'project_path', None):
+            if os.path.exists(args.project_path):
+                project_model_dict = torch.load(args.project_path)
+                for key, value in project_model_dict.items():
+                    state['model']['project.'+key] = value
+                print(f'| load project model from {args.project_path}')
+        print(args.arch)
         model = task.build_model(args)
         model.load_state_dict(state['model'], strict=True)
         ensemble.append(model)

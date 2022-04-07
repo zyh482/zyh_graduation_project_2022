@@ -31,7 +31,7 @@ class ProjectModel(nn.Module):
         """
         x = x[:, 0, :]      # cls
         if self.args.residual:
-            residual = xgit
+            residual = x
         x = self.fc1(x)
         x = self.activation_fn(x)
         x = F.dropout(x, p=self.activation_dropout, training=self.training)

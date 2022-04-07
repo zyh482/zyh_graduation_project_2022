@@ -45,7 +45,7 @@ def train_project(args):
     path_prefix = 'project_model'
     if args.residual:
         path_prefix = path_prefix+'_residual'
-    path_prefix += f'_{args.cosine_target}'
+    path_prefix += f'_h{args.hidden_dim}'
 
     train_meter = StopwatchMeter()
     train_meter.start()
@@ -56,19 +56,25 @@ def train_project(args):
         # validate
         if not args.disable_validation and epoch % args.validate_interval == 0:
             validate(args, trainer, valid_dataloader, epoch)
+            valid_avg_loss = trainer.get_meter('valid_loss').avg
             # save the best model
-            if sum(valid_losses) / len(valid_losses) < best_valid_loss:
-                best_valid_loss = sum(valid_losses) / len(valid_losses)
+            if valid_avg_loss < best_valid_loss:
+                best_valid_loss = valid_avg_loss
                 trainer.save_model(os.path.join(args.save_dir, f'{path_prefix}.best'))
         else:
-            valid_losses = [None]
+            valid_avg_loss = None
 
-        # only use first validation loss to update the learning rate
-        lr = trainer.lr_step(epoch, valid_losses[0])
+        # use validation loss to update the learning rate
+        lr = trainer.lr_step(epoch, valid_avg_loss)
         # save the latest model
         trainer.save_model(os.path.join(args.save_dir, f'{path_prefix}.latest'))
 
         epoch += 1
+        # reset training meters
+        for k in trainer.meters.keys():
+            meter = trainer.get_meter(k)
+            if meter is not None:
+                meter.reset()
 
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
@@ -95,11 +101,6 @@ def train(args, trainer, dataloader, epoch):
         if isinstance(meter, AverageMeter):
             stats[k] = stats[k].avg
     progress.print(stats, tag='train', step=stats['num_updates'])
-    # reset training meters
-    for k in trainer.meters.keys():
-        meter = trainer.get_meter(k)
-        if meter is not None:
-            meter.reset()
 
 
 def get_training_stats(trainer):
@@ -121,7 +122,6 @@ def validate(args, trainer, dataloader, epoch):
 
     for i, batch in enumerate(dataloader):
         valid_loss = trainer.valid_step(batch)
-        valid_loss = valid_loss.item()
 
     # log validation stats
     stats = get_valid_stats(trainer)

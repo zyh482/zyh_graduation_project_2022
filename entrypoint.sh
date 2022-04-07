@@ -7,11 +7,11 @@ python3 -c "import torch; print(torch.__version__)"
 src=en
 tgt=de
 bedropout=0.3
-mode='sample'
+mode='model'
 split='valid'
-ARCH=transformer_s2_iwslt_de_en
+ARCH=transformer_s3_iwslt_de_en
 DATAPATH=data-bin/iwslt14.tokenized.en-de
-SAVEDIR=checkpoints/iwed_${src}_${tgt}_${bedropout}_${mode}
+SAVEDIR=checkpoints/iwed_${src}_${tgt}_${bedropout}_sample
 mkdir -p $SAVEDIR
 if [ ! -f $SAVEDIR/checkpoint_nmt.pt ]
 then
@@ -25,7 +25,7 @@ else
 warmup=""
 fi
 
-CUDA_VISIBLE_DEVICES=5 nohup python train.py $DATAPATH \
+CUDA_VISIBLE_DEVICES=5 python train.py $DATAPATH \
 -a $ARCH --optimizer adam --lr 0.03 -s $src -t $tgt --label-smoothing 0.1 \
 --dropout 0.3 --max-tokens 4000 --min-lr '1e-05' --weight-decay 0.0001 \
 --criterion label_smoothed_cross_entropy --max-update 1000 \

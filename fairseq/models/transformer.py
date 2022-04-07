@@ -10,7 +10,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from numpy.random import  uniform
+from numpy.random import uniform
 from fairseq import options, utils
 from fairseq.models import (
     FairseqEncoder,
@@ -19,6 +19,7 @@ from fairseq.models import (
     register_model,
     register_model_architecture,
 )
+from fairseq.models.fairseq_model import FairseqEncoderVaeDecoderModel
 from fairseq.modules import (
     AdaptiveSoftmax,
     LayerNorm,
@@ -27,10 +28,13 @@ from fairseq.modules import (
     SinusoidalPositionalEmbedding,
 )
 from bert import BertTokenizer
+from project_model import ProjectModel
+
 DEFAULT_MAX_SOURCE_POSITIONS = 1024
 DEFAULT_MAX_TARGET_POSITIONS = 1024
 
 from bert import BertModel
+
 
 @register_model('transformer')
 class TransformerModel(FairseqEncoderDecoderModel):
@@ -171,6 +175,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
     @classmethod
     def build_decoder(cls, args, tgt_dict, embed_tokens):
         return TransformerDecoder(args, tgt_dict, embed_tokens)
+
 
 @register_model('transformers2')
 class TransformerS2Model(FairseqEncoderDecoderModel):
@@ -336,19 +341,209 @@ class TransformerS2Model(FairseqEncoderDecoderModel):
                 - a dictionary with any model-specific outputs
         """
         bert_encoder_padding_mask = bert_input.eq(self.berttokenizer.pad())
-        bert_encoder_out, _ = self.bert_encoder(bert_input, output_all_encoded_layers=True, attention_mask=~bert_encoder_padding_mask)
+        bert_encoder_out, _ = self.bert_encoder(bert_input, output_all_encoded_layers=True,
+                                                attention_mask=~bert_encoder_padding_mask)
         bert_encoder_out = bert_encoder_out[self.bert_output_layer]
         if self.mask_cls_sep:
             bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.cls())
             bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.sep())
-        bert_encoder_out = bert_encoder_out.permute(1,0,2).contiguous()
+        bert_encoder_out = bert_encoder_out.permute(1, 0, 2).contiguous()
         bert_encoder_out = {
             'bert_encoder_out': bert_encoder_out,
             'bert_encoder_padding_mask': bert_encoder_padding_mask,
         }
         encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, bert_encoder_out=bert_encoder_out)
-        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out, bias=bias, **kwargs)
+        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out,
+                                   bias=bias, **kwargs)
         return decoder_out
+
+
+@register_model('transformers3')
+class TransformerS3Model(FairseqEncoderVaeDecoderModel):
+    """
+    Transformer model from `"Attention Is All You Need" (Vaswani, et al, 2017)
+    <https://arxiv.org/abs/1706.03762>`_.
+
+    Args:
+        encoder (TransformerEncoder): the encoder
+        decoder (TransformerDecoder): the decoder
+
+    The Transformer model provides the following named architectures and
+    command-line arguments:
+
+    .. argparse::
+        :ref: fairseq.models.transformer_parser
+        :prog:
+    """
+
+    def __init__(self, encoder, decoder, bertencoder, berttokenizer, project, mask_cls_sep=False, args=None):
+        super().__init__(encoder, decoder, bertencoder, berttokenizer, project, mask_cls_sep, args)
+
+    @staticmethod
+    def add_args(parser):
+        """Add model-specific arguments to the parser."""
+        # fmt: off
+        parser.add_argument('--activation-fn',
+                            choices=utils.get_available_activation_fns(),
+                            help='activation function to use')
+        parser.add_argument('--dropout', type=float, metavar='D',
+                            help='dropout probability')
+        parser.add_argument('--attention-dropout', type=float, metavar='D',
+                            help='dropout probability for attention weights')
+        parser.add_argument('--activation-dropout', '--relu-dropout', type=float, metavar='D',
+                            help='dropout probability after activation in FFN.')
+        parser.add_argument('--encoder-embed-path', type=str, metavar='STR',
+                            help='path to pre-trained encoder embedding')
+        parser.add_argument('--encoder-embed-dim', type=int, metavar='N',
+                            help='encoder embedding dimension')
+        parser.add_argument('--encoder-ffn-embed-dim', type=int, metavar='N',
+                            help='encoder embedding dimension for FFN')
+        parser.add_argument('--encoder-layers', type=int, metavar='N',
+                            help='num encoder layers')
+        parser.add_argument('--encoder-attention-heads', type=int, metavar='N',
+                            help='num encoder attention heads')
+        parser.add_argument('--encoder-normalize-before', action='store_true',
+                            help='apply layernorm before each encoder block')
+        parser.add_argument('--encoder-learned-pos', action='store_true',
+                            help='use learned positional embeddings in the encoder')
+        parser.add_argument('--decoder-embed-path', type=str, metavar='STR',
+                            help='path to pre-trained decoder embedding')
+        parser.add_argument('--decoder-embed-dim', type=int, metavar='N',
+                            help='decoder embedding dimension')
+        parser.add_argument('--decoder-ffn-embed-dim', type=int, metavar='N',
+                            help='decoder embedding dimension for FFN')
+        parser.add_argument('--decoder-layers', type=int, metavar='N',
+                            help='num decoder layers')
+        parser.add_argument('--decoder-attention-heads', type=int, metavar='N',
+                            help='num decoder attention heads')
+        parser.add_argument('--decoder-learned-pos', action='store_true',
+                            help='use learned positional embeddings in the decoder')
+        parser.add_argument('--decoder-normalize-before', action='store_true',
+                            help='apply layernorm before each decoder block')
+        parser.add_argument('--share-decoder-input-output-embed', action='store_true',
+                            help='share decoder input and output embeddings')
+        parser.add_argument('--share-all-embeddings', action='store_true',
+                            help='share encoder, decoder and output embeddings'
+                                 ' (requires shared dictionary and embed dim)')
+        parser.add_argument('--no-token-positional-embeddings', default=False, action='store_true',
+                            help='if set, disables positional embeddings (outside self attention)')
+        parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
+                            help='comma separated list of adaptive softmax cutoff points. '
+                                 'Must be used with adaptive_loss criterion'),
+        parser.add_argument('--adaptive-softmax-dropout', type=float, metavar='D',
+                            help='sets adaptive softmax dropout for the tail projections')
+        # fmt: on
+
+    @classmethod
+    def build_model(cls, args, task):
+        """Build a new model instance."""
+
+        # make sure all arguments are present in older models
+        base_architecture(args)
+
+        if not hasattr(args, 'max_source_positions'):
+            args.max_source_positions = DEFAULT_MAX_SOURCE_POSITIONS
+        if not hasattr(args, 'max_target_positions'):
+            args.max_target_positions = DEFAULT_MAX_TARGET_POSITIONS
+
+        src_dict, tgt_dict = task.source_dictionary, task.target_dictionary
+        if len(task.datasets) > 0:
+            src_berttokenizer = next(iter(task.datasets.values())).berttokenizer
+        else:
+            src_berttokenizer = BertTokenizer.from_pretrained(args.bert_model_name)
+
+        def build_embedding(dictionary, embed_dim, path=None):
+            num_embeddings = len(dictionary)
+            padding_idx = dictionary.pad()
+            emb = Embedding(num_embeddings, embed_dim, padding_idx)
+            # if provided, load from preloaded dictionaries
+            if path:
+                embed_dict = utils.parse_embedding(path)
+                utils.load_embedding(embed_dict, dictionary, emb)
+            return emb
+
+        if args.share_all_embeddings:
+            if src_dict != tgt_dict:
+                raise ValueError('--share-all-embeddings requires a joined dictionary')
+            if args.encoder_embed_dim != args.decoder_embed_dim:
+                raise ValueError(
+                    '--share-all-embeddings requires --encoder-embed-dim to match --decoder-embed-dim')
+            if args.decoder_embed_path and (
+                    args.decoder_embed_path != args.encoder_embed_path):
+                raise ValueError('--share-all-embeddings not compatible with --decoder-embed-path')
+            encoder_embed_tokens = build_embedding(
+                src_dict, args.encoder_embed_dim, args.encoder_embed_path
+            )
+            decoder_embed_tokens = encoder_embed_tokens
+            args.share_decoder_input_output_embed = True
+        else:
+            encoder_embed_tokens = build_embedding(
+                src_dict, args.encoder_embed_dim, args.encoder_embed_path
+            )
+            decoder_embed_tokens = build_embedding(
+                tgt_dict, args.decoder_embed_dim, args.decoder_embed_path
+            )
+        bertencoder = BertModel.from_pretrained(args.bert_model_name)
+        args.bert_out_dim = bertencoder.hidden_size
+        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
+        project = cls.build_project(args)
+        decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens)
+
+        return TransformerS3Model(encoder, decoder, bertencoder, src_berttokenizer, project, args.mask_cls_sep, args)
+
+    @classmethod
+    def build_encoder(cls, args, src_dict, embed_tokens):
+        return TransformerS2Encoder(args, src_dict, embed_tokens)
+
+    @classmethod
+    def build_decoder(cls, args, tgt_dict, embed_tokens):
+        return TransformerDecoder(args, tgt_dict, embed_tokens)
+
+    @classmethod
+    def build_project(cls, args):
+        return ProjectModel(args)
+
+    def forward(self, src_tokens, src_lengths, prev_output_tokens, bert_input, bias=None, **kwargs):
+        """
+        Run the forward pass for an encoder-decoder model.
+
+        First feed a batch of source tokens through the encoder. Then, feed the
+        encoder output and previous decoder outputs (i.e., input feeding/teacher
+        forcing) to the decoder to produce the next outputs::
+
+            encoder_out = self.encoder(src_tokens, src_lengths)
+            return self.decoder(prev_output_tokens, encoder_out)
+
+        Args:
+            src_tokens (LongTensor): tokens in the source language of shape
+                `(batch, src_len)`
+            src_lengths (LongTensor): source sentence lengths of shape `(batch)`
+            prev_output_tokens (LongTensor): previous decoder outputs of shape
+                `(batch, tgt_len)`, for input feeding/teacher forcing
+
+        Returns:
+            tuple:
+                - the decoder's output of shape `(batch, tgt_len, vocab)`
+                - a dictionary with any model-specific outputs
+        """
+        bert_encoder_padding_mask = bert_input.eq(self.berttokenizer.pad())
+        bert_encoder_out, _ = self.bert_encoder(bert_input, output_all_encoded_layers=True,
+                                                attention_mask=~bert_encoder_padding_mask)
+        bert_encoder_out = bert_encoder_out[self.bert_output_layer]
+        bias = self.project(bert_encoder_out)
+        if self.mask_cls_sep:
+            bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.cls())
+            bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.sep())
+        bert_encoder_out = bert_encoder_out.permute(1, 0, 2).contiguous()
+        bert_encoder_out = {
+            'bert_encoder_out': bert_encoder_out,
+            'bert_encoder_padding_mask': bert_encoder_padding_mask,
+        }
+        encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, bert_encoder_out=bert_encoder_out)
+        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out,
+                                   bias=bias, **kwargs)
+        return decoder_out
+
 
 @register_model('transformerstack')
 class TransformerModelStack(FairseqEncoderDecoderModel):
@@ -490,6 +685,7 @@ class TransformerModelStack(FairseqEncoderDecoderModel):
     @classmethod
     def build_decoder(cls, args, tgt_dict, embed_tokens):
         return TransformerDecoderStack(args, tgt_dict, embed_tokens)
+
 
 class TransformerEncoder(FairseqEncoder):
     """
@@ -696,7 +892,8 @@ class TransformerS2Encoder(FairseqEncoder):
 
         # encoder layers
         for layer in self.layers:
-            x = layer(x, encoder_padding_mask, bert_encoder_out['bert_encoder_out'], bert_encoder_out['bert_encoder_padding_mask'])
+            x = layer(x, encoder_padding_mask, bert_encoder_out['bert_encoder_out'],
+                      bert_encoder_out['bert_encoder_padding_mask'])
 
         if self.layer_norm:
             x = self.layer_norm(x)
@@ -755,7 +952,6 @@ class TransformerS2Encoder(FairseqEncoder):
             self.normalize = False
             state_dict[version_key] = torch.Tensor([1])
         return state_dict
-
 
 
 class TransformerDecoder(FairseqIncrementalDecoder):
@@ -836,8 +1032,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         else:
             self.layer_norm = None
 
-
-    def forward(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, bias=None, incremental_state=None, **unused):
+    def forward(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, bias=None, incremental_state=None,
+                **unused):
         """
         Args:
             prev_output_tokens (LongTensor): previous decoder outputs of shape
@@ -856,7 +1052,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         x = self.output_layer(x)
         return x, extra
 
-    def extract_features(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, bias=None, incremental_state=None, **unused):
+    def extract_features(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, bias=None,
+                         incremental_state=None, **unused):
         """
         Similar to *forward* but only return features.
 
@@ -979,6 +1176,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         return state_dict
 
+
 class TransformerDecoderStack(FairseqIncrementalDecoder):
     """
     Transformer decoder consisting of *args.decoder_layers* layers. Each layer
@@ -1046,7 +1244,6 @@ class TransformerDecoderStack(FairseqIncrementalDecoder):
         else:
             self.layer_norm = None
 
-
     def forward(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, incremental_state=None, **unused):
         """
         Args:
@@ -1066,7 +1263,8 @@ class TransformerDecoderStack(FairseqIncrementalDecoder):
         x = self.output_layer(x)
         return x, extra
 
-    def extract_features(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, incremental_state=None, **unused):
+    def extract_features(self, prev_output_tokens, encoder_out=None, bert_encoder_out=None, incremental_state=None,
+                         **unused):
         """
         Similar to *forward* but only return features.
 
@@ -1182,6 +1380,7 @@ class TransformerDecoderStack(FairseqIncrementalDecoder):
 
         return state_dict
 
+
 class TransformerEncoderLayer(nn.Module):
     """Encoder layer block.
 
@@ -1271,6 +1470,7 @@ class TransformerEncoderLayer(nn.Module):
         else:
             return x
 
+
 class TransformerS2EncoderLayer(nn.Module):
     """Encoder layer block.
 
@@ -1357,7 +1557,8 @@ class TransformerS2EncoderLayer(nn.Module):
         residual = x
         x = self.maybe_layer_norm(self.self_attn_layer_norm, x, before=True)
         x1, _ = self.self_attn(query=x, key=x, value=x, key_padding_mask=encoder_padding_mask)
-        x2, _ = self.bert_attn(query=x, key=bert_encoder_out, value=bert_encoder_out, key_padding_mask=bert_encoder_padding_mask)
+        x2, _ = self.bert_attn(query=x, key=bert_encoder_out, value=bert_encoder_out,
+                               key_padding_mask=bert_encoder_padding_mask)
         x1 = F.dropout(x1, p=self.dropout, training=self.training)
         x2 = F.dropout(x2, p=self.dropout, training=self.training)
         ratios = self.get_ratio()
@@ -1394,6 +1595,7 @@ class TransformerS2EncoderLayer(nn.Module):
             return layer_norm(x)
         else:
             return x
+
 
 class TransformerDecoderLayer(nn.Module):
     """Decoder layer block.
@@ -1479,18 +1681,18 @@ class TransformerDecoderLayer(nn.Module):
         self.onnx_trace = True
 
     def forward(
-        self,
-        x,
-        encoder_out=None,
-        encoder_padding_mask=None,
-        bert_encoder_out=None,
-        bert_encoder_padding_mask=None,
-        bias=None,
-        incremental_state=None,
-        prev_self_attn_state=None,
-        prev_attn_state=None,
-        self_attn_mask=None,
-        self_attn_padding_mask=None,
+            self,
+            x,
+            encoder_out=None,
+            encoder_padding_mask=None,
+            bert_encoder_out=None,
+            bert_encoder_padding_mask=None,
+            bias=None,
+            incremental_state=None,
+            prev_self_attn_state=None,
+            prev_attn_state=None,
+            self_attn_mask=None,
+            self_attn_padding_mask=None,
     ):
         """
         Args:
@@ -1523,7 +1725,8 @@ class TransformerDecoderLayer(nn.Module):
 
         if bias is None:
             bias = torch.zeros_like(x).to(x.device)
-        assert x.shape == bias.shape or bias.shape == x.shape[-2:], f'Unmatched bias shape {bias.shape} with x shape {x.shape}'
+        assert x.shape == bias.shape or bias.shape == x.shape[
+                                                      -2:], f'Unmatched bias shape {bias.shape} with x shape {x.shape}'
         x = residual + x + bias
         x = self.maybe_layer_norm(self.self_attn_layer_norm, x, after=True)
 
@@ -1597,6 +1800,7 @@ class TransformerDecoderLayer(nn.Module):
 
     def make_generation_fast_(self, need_attn=False, **kwargs):
         self.need_attn = need_attn
+
 
 class TransformerStandardDecoderLayer(nn.Module):
     """Decoder layer block.
@@ -1678,17 +1882,17 @@ class TransformerStandardDecoderLayer(nn.Module):
         self.onnx_trace = True
 
     def forward(
-        self,
-        x,
-        encoder_out=None,
-        encoder_padding_mask=None,
-        bert_encoder_out=None,
-        bert_encoder_padding_mask=None,
-        incremental_state=None,
-        prev_self_attn_state=None,
-        prev_attn_state=None,
-        self_attn_mask=None,
-        self_attn_padding_mask=None,
+            self,
+            x,
+            encoder_out=None,
+            encoder_padding_mask=None,
+            bert_encoder_out=None,
+            bert_encoder_padding_mask=None,
+            incremental_state=None,
+            prev_self_attn_state=None,
+            prev_attn_state=None,
+            self_attn_mask=None,
+            self_attn_padding_mask=None,
     ):
         """
         Args:
@@ -1790,6 +1994,8 @@ class TransformerStandardDecoderLayer(nn.Module):
 
     def make_generation_fast_(self, need_attn=False, **kwargs):
         self.need_attn = need_attn
+
+
 class TransformerDecoderLayerStack(nn.Module):
     def __init__(self, args, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False):
         super().__init__()
@@ -1895,6 +2101,7 @@ class TransformerDecoderLayerStack(nn.Module):
                 prev_key, prev_value = prev_attn_state
                 saved_state = {"prev_key": prev_key, "prev_value": prev_value}
                 self.encoder_attn._set_input_buffer(incremental_state, saved_state)
+
             def sinattn(attnlayer, x, layer_norm, keyorvalue, key_padding, incremental_state):
                 residual = x
                 x = self.maybe_layer_norm(layer_norm, x, before=True)
@@ -1906,11 +2113,12 @@ class TransformerDecoderLayerStack(nn.Module):
                     incremental_state=incremental_state,
                     static_kv=True,
                     need_weights=(not self.training and self.need_attn),
-                                )
+                )
                 x = F.dropout(x, p=self.dropout, training=self.training)
                 x = residual + x
                 x = self.maybe_layer_norm(layer_norm, x, after=True)
                 return x, attn
+
             if self.bert_first:
                 x, attn = sinattn(self.bert_attn, x, self.bert_attn_layer_norm, bert_encoder_out,
                                   bert_encoder_padding_mask, incremental_state)
@@ -1921,7 +2129,6 @@ class TransformerDecoderLayerStack(nn.Module):
                                   incremental_state)
                 x, attn = sinattn(self.bert_attn, x, self.bert_attn_layer_norm, bert_encoder_out,
                                   bert_encoder_padding_mask, incremental_state)
-
 
         residual = x
         x = self.maybe_layer_norm(self.final_layer_norm, x, before=True)
@@ -1946,6 +2153,7 @@ class TransformerDecoderLayerStack(nn.Module):
 
     def make_generation_fast_(self, need_attn=False, **kwargs):
         self.need_attn = need_attn
+
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
@@ -2023,6 +2231,7 @@ def base_architecture_s2(args):
     args.decoder_output_dim = getattr(args, 'decoder_output_dim', args.decoder_embed_dim)
     args.decoder_input_dim = getattr(args, 'decoder_input_dim', args.decoder_embed_dim)
 
+
 @register_model_architecture('transformerstack', 'transformerstack')
 def base_stack_architecture(args):
     args.encoder_embed_path = getattr(args, 'encoder_embed_path', None)
@@ -2054,8 +2263,6 @@ def base_stack_architecture(args):
     args.decoder_input_dim = getattr(args, 'decoder_input_dim', args.decoder_embed_dim)
 
 
-
-
 @register_model_architecture('transformer', 'transformer_iwslt_de_en')
 def transformer_iwslt_de_en(args):
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
@@ -2067,6 +2274,7 @@ def transformer_iwslt_de_en(args):
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
     args.decoder_layers = getattr(args, 'decoder_layers', 6)
     base_architecture(args)
+
 
 @register_model_architecture('transformers2', 'transformer_s2_iwslt_de_en')
 def transformer_s2_iwslt_de_en(args):
@@ -2080,6 +2288,55 @@ def transformer_s2_iwslt_de_en(args):
     args.decoder_layers = getattr(args, 'decoder_layers', 6)
     base_architecture_s2(args)
 
+
+@register_model_architecture('transformers3', 'transformers3')
+def base_architecture_s3(args):
+    args.encoder_embed_path = getattr(args, 'encoder_embed_path', None)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 2048)
+    args.encoder_layers = getattr(args, 'encoder_layers', 6)
+    args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 8)
+    args.encoder_normalize_before = getattr(args, 'encoder_normalize_before', False)
+    args.encoder_learned_pos = getattr(args, 'encoder_learned_pos', False)
+    args.decoder_embed_path = getattr(args, 'decoder_embed_path', None)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', args.encoder_embed_dim)
+    args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', args.encoder_ffn_embed_dim)
+    args.decoder_layers = getattr(args, 'decoder_layers', 6)
+    args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 8)
+    args.decoder_normalize_before = getattr(args, 'decoder_normalize_before', False)
+    args.decoder_learned_pos = getattr(args, 'decoder_learned_pos', False)
+    args.attention_dropout = getattr(args, 'attention_dropout', 0.)
+    args.activation_dropout = getattr(args, 'activation_dropout', 0.)
+    args.activation_fn = getattr(args, 'activation_fn', 'relu')
+    args.dropout = getattr(args, 'dropout', 0.1)
+    args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', None)
+    args.adaptive_softmax_dropout = getattr(args, 'adaptive_softmax_dropout', 0)
+    args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', False)
+    args.share_all_embeddings = getattr(args, 'share_all_embeddings', False)
+    args.no_token_positional_embeddings = getattr(args, 'no_token_positional_embeddings', False)
+    args.adaptive_input = getattr(args, 'adaptive_input', False)
+
+    args.decoder_output_dim = getattr(args, 'decoder_output_dim', args.decoder_embed_dim)
+    args.decoder_input_dim = getattr(args, 'decoder_input_dim', args.decoder_embed_dim)
+
+    args.hidden_dim = getattr(args, 'hidden_dim', args.hidden_dim)
+    args.residual = getattr(args, 'residual', False)
+
+
+@register_model_architecture('transformers3', 'transformer_s3_iwslt_de_en')
+def transformer_s3_iwslt_de_en(args):
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 1024)
+    args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 4)
+    args.encoder_layers = getattr(args, 'encoder_layers', 6)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 1024)
+    args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
+    args.decoder_layers = getattr(args, 'decoder_layers', 6)
+    args.hidden_dim = getattr(args, 'hidden_dim', 512)
+    base_architecture_s3(args)
+
+
 @register_model_architecture('transformerstack', 'transformerstack_iwslt_de_en')
 def transformerstack_iwslt_de_en(args):
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
@@ -2091,6 +2348,7 @@ def transformerstack_iwslt_de_en(args):
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
     args.decoder_layers = getattr(args, 'decoder_layers', 6)
     base_stack_architecture(args)
+
 
 @register_model_architecture('transformers2', 'transformer_wmt_en_de')
 def transformer_wmt_en_de(args):
@@ -2110,6 +2368,7 @@ def transformer_vaswani_wmt_en_de_big(args):
     args.dropout = getattr(args, 'dropout', 0.3)
     base_architecture(args)
 
+
 @register_model_architecture('transformers2', 'transformer_s2_vaswani_wmt_en_de_big')
 def transformer_s2_vaswani_wmt_en_de_big(args):
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 1024)
@@ -2121,6 +2380,7 @@ def transformer_s2_vaswani_wmt_en_de_big(args):
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 16)
     args.dropout = getattr(args, 'dropout', 0.3)
     base_architecture_s2(args)
+
 
 @register_model_architecture('transformer', 'transformer_vaswani_wmt_en_fr_big')
 def transformer_vaswani_wmt_en_fr_big(args):

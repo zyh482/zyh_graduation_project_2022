@@ -18,6 +18,7 @@ from torch.nn import Parameter
 from fairseq import utils
 from fairseq.data import Dictionary
 from fairseq.models import FairseqDecoder, FairseqEncoder
+from project_model import ProjectModel
 
 
 class BaseFairseqModel(nn.Module):
@@ -250,6 +251,109 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
             'bert_encoder_padding_mask': bert_encoder_padding_mask,
         }
         decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out, **kwargs)
+        return decoder_out
+
+    def extract_features(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
+        """
+        Similar to *forward* but only return features.
+
+        Returns:
+            tuple:
+                - the decoder's features of shape `(batch, tgt_len, embed_dim)`
+                - a dictionary with any model-specific outputs
+        """
+        encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
+        features = self.decoder.extract_features(prev_output_tokens, encoder_out=encoder_out, **kwargs)
+        return features
+
+    def output_layer(self, features, **kwargs):
+        """Project features to the default output size (typically vocabulary size)."""
+        return self.decoder.output_layer(features, **kwargs)
+
+    def max_positions(self):
+        """Maximum length supported by the model."""
+        return (self.encoder.max_positions(), self.decoder.max_positions())
+
+    def max_decoder_positions(self):
+        """Maximum length supported by the decoder."""
+        return self.decoder.max_positions()
+
+
+class FairseqEncoderVaeDecoderModel(BaseFairseqModel):
+    """Base class for encoder-decoder models.
+
+    Args:
+        encoder (FairseqEncoder): the encoder
+        decoder (FairseqDecoder): the decoder
+    """
+
+    def __init__(self, encoder, decoder, bertencoder, berttokenizer, project, mask_cls_sep, args=None):
+        super().__init__()
+
+        self.encoder = encoder
+        self.decoder = decoder
+        self.bert_encoder = bertencoder
+        self.berttokenizer = berttokenizer
+        self.project = project
+        self.mask_cls_sep = mask_cls_sep
+        self.bert_output_layer = getattr(args, 'bert_output_layer', -1)
+        # outdim = self.encoder.layers[0].embed_dim
+        # indim = self.bert_encoder.encoder.hidden_size
+        # if not outdim == indim:
+        #     self.trans_weight = Parameter(torch.Tensor(outdim, indim))
+        #     bias = False
+        #     if bias:
+        #         self.trans_bias = Parameter(torch.Tensor(outdim))
+        #     else:
+        #         self.trans_bias = None
+        # self.reset_parameters()
+        assert isinstance(self.encoder, FairseqEncoder)
+        assert isinstance(self.decoder, FairseqDecoder)
+        assert isinstance(self.project, ProjectModel)
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.trans_weight)
+        if self.trans_bias is not None:
+            nn.init.constant_(self.trans_bias, 0.)
+
+    def forward(self, src_tokens, src_lengths, prev_output_tokens, bert_input, **kwargs):
+        """
+        Run the forward pass for an encoder-decoder model.
+
+        First feed a batch of source tokens through the encoder. Then, feed the
+        encoder output and previous decoder outputs (i.e., input feeding/teacher
+        forcing) to the decoder to produce the next outputs::
+
+            encoder_out = self.encoder(src_tokens, src_lengths)
+            return self.decoder(prev_output_tokens, encoder_out)
+
+        Args:
+            src_tokens (LongTensor): tokens in the source language of shape
+                `(batch, src_len)`
+            src_lengths (LongTensor): source sentence lengths of shape `(batch)`
+            prev_output_tokens (LongTensor): previous decoder outputs of shape
+                `(batch, tgt_len)`, for input feeding/teacher forcing
+
+        Returns:
+            tuple:
+                - the decoder's output of shape `(batch, tgt_len, vocab)`
+                - a dictionary with any model-specific outputs
+        """
+        encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, **kwargs)
+        bert_encoder_padding_mask = bert_input.eq(self.berttokenizer.pad())
+        bert_encoder_out, _ = self.bert_encoder(bert_input, output_all_encoded_layers=True, attention_mask=~bert_encoder_padding_mask)
+        bert_encoder_out = bert_encoder_out[self.bert_output_layer]
+        if self.mask_cls_sep:
+            bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.cls())
+            bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.sep())
+        bert_encoder_out = bert_encoder_out.permute(1,0,2).contiguous()
+        # bert_encoder_out = F.linear(bert_encoder_out, self.trans_weight, self.trans_bias)
+        bert_encoder_out = {
+            'bert_encoder_out': bert_encoder_out,
+            'bert_encoder_padding_mask': bert_encoder_padding_mask,
+        }
+        bias = self.project(bert_encoder_out['bert_encoder_out'])
+        decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out, bias=bias, **kwargs)
         return decoder_out
 
     def extract_features(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):

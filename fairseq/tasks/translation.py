@@ -239,7 +239,8 @@ class TranslationTask(FairseqTask):
             max_target_positions=self.args.max_target_positions,
             bert_model_name=self.bert_model_name
         )
-        self.bias_save_path = os.path.join(self.args.sample_savedir, f'{split}.bert.{src}-{tgt}.bias')
+        if self.args.train_mode == 'sample':
+            self.bias_save_path = os.path.join(self.args.sample_savedir, f'{split}.bert.{src}-{tgt}.bias')
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, srcbert, srcbert_sizes, berttokenizer):
         return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary, srcbert=srcbert, srcbert_sizes=srcbert_sizes, berttokenizer=berttokenizer)

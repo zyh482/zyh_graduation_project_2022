@@ -152,6 +152,8 @@ class SequenceGenerator(object):
         bert_encoder_padding_mask = bertinput.eq(model.models[0].berttokenizer.pad())
         bert_outs, _ = model.models[0].bert_encoder(bertinput, output_all_encoded_layers=True, attention_mask=~bert_encoder_padding_mask)
         bert_outs = bert_outs[self.bert_output_layer]
+        if model.models[0].__class__.__name__ == 'TransformerS3Model':
+            bias = model.forward_project(bert_outs)
         if model.models[0].mask_cls_sep:
             bert_encoder_padding_mask += bertinput.eq(model.models[0].berttokenizer.cls())
             bert_encoder_padding_mask += bertinput.eq(model.models[0].berttokenizer.sep())
@@ -161,14 +163,14 @@ class SequenceGenerator(object):
             'bert_encoder_out': bert_outs,
             'bert_encoder_padding_mask': bert_encoder_padding_mask,
         }]
-        if model.models[0].__class__.__name__ == 'TransformerS2Model':
+        if model.models[0].__class__.__name__ in ['TransformerS2Model', 'TransformerS3Model']:
             encoder_input['bert_encoder_out'] = bert_outs[0]
         encoder_outs = model.forward_encoder(encoder_input)
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
         new_order = new_order.to(src_tokens.device).long()
         encoder_outs, bert_outs = model.reorder_encoder_out(encoder_outs, bert_outs, new_order)
         if bias is not None:
-            bias = torch.index_select(bias, 0, new_order)
+            bias = torch.index_select(bias[0], 0, new_order)
 
         # initialize buffers
         scores = src_tokens.new(bsz * beam_size, max_len + 1).float().fill_(0)
@@ -586,6 +588,9 @@ class EnsembleModel(torch.nn.Module):
     def has_encoder(self):
         return hasattr(self.models[0], 'encoder')
 
+    def has_project(self):
+        return hasattr(self.models[0], 'project')
+
     def max_decoder_positions(self):
         return min(m.max_decoder_positions() for m in self.models)
 
@@ -594,6 +599,12 @@ class EnsembleModel(torch.nn.Module):
         if not self.has_encoder():
             return None
         return [model.encoder(**encoder_input) for model in self.models]
+
+    @torch.no_grad()
+    def forward_project(self, bert_output):
+        if not self.has_project():
+            return None
+        return [model.project(bert_output) for model in self.models]
 
     @torch.no_grad()
     def forward_decoder(self, tokens, encoder_outs, bert_outs, bias, temperature=1.):
@@ -658,7 +669,7 @@ class EnsembleModel(torch.nn.Module):
         if not self.has_encoder():
             return
         model = self.models[0]
-        encoder_outs, bert_outs = model.encoder.re_encoder_out(encoder_outs[0], bert_outs[0], new_order)
+        encoder_outs, bert_outs = model.encoder.reorder_encoder_out(encoder_outs[0], bert_outs[0], new_order)
         return [encoder_outs], [bert_outs]
 
 
