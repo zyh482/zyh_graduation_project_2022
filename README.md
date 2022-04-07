@@ -45,6 +45,10 @@ pip install --editable .
   ```
   bash project-entrypoint.sh
   ```
+- ### 评估加入project后的模型
+  ```
+  bash evaluate_project.sh
+  ```
 
 
 ## 参考文献
