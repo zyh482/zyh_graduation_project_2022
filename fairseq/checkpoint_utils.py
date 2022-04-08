@@ -131,7 +131,7 @@ def load_checkpoint(args, trainer):
     else:
         epoch_itr = trainer.get_train_iterator(epoch=0)
 
-    if args.train_mode == 'model':
+    if args.train_mode != 'sample':
         trainer.lr_step(epoch_itr.epoch)
 
     return extra_state, epoch_itr

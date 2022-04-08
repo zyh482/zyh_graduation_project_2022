@@ -604,7 +604,7 @@ class EnsembleModel(torch.nn.Module):
     def forward_project(self, bert_output):
         if not self.has_project():
             return None
-        return [model.project(bert_output) for model in self.models]
+        return [model.project(bert_output)[0] for model in self.models]
 
     @torch.no_grad()
     def forward_decoder(self, tokens, encoder_outs, bert_outs, bias, temperature=1.):

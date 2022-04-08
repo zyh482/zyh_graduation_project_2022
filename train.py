@@ -23,6 +23,7 @@ from fairseq.meters import AverageMeter, StopwatchMeter
 
 from train_model import train_model
 from train_sample import train_sample
+from train_vae import train_vae
 
 
 def main(args, init_distributed=False):
@@ -40,12 +41,13 @@ def main(args, init_distributed=False):
 
     # Print args
     print(args)
+    print(f'f| Train mode: {args.train_mode}')
     if args.train_mode == 'model':
-        print('| Train mode: model')
         train_model(args)
     elif args.train_mode == 'sample':
-        print('| Train mode: sample')
         train_sample(args)
+    elif args.train_mode == 'vae':
+        train_vae(args)
     else:
         print('| Valid train mode!')
 

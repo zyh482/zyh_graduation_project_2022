@@ -35,7 +35,6 @@ def get_generation_parser(interactive=False, default_task='translation'):
     parser = get_parser('Generation', default_task)
     add_dataset_args(parser, gen=True)
     add_generation_args(parser)
-    add_project_args(parser)
     if interactive:
         add_interactive_args(parser)
     return parser
@@ -468,18 +467,6 @@ def add_generation_args(parser):
     group.add_argument('--change-ratio', action='store_true')
     parser.add_argument('--eval-bleu-remove-bpe', nargs='?', const='@@ ', default=None, help='remove BPE before computing BLEU')
     parser.add_argument('--eval-bleu-print-samples', action='store_true', help='print sample generations during validation')
-
-    # fmt: on
-    return group
-
-
-def add_project_args(parser):
-    group = parser.add_argument_group('Project')
-    # fmt: off
-    group.add_argument('--residual', action='store_true',
-                       help='weather use residual in project model')
-    group.add_argument('--hidden-dim', default=768, type=int,
-                       help='hidden-state dim of project model')
 
     # fmt: on
     return group

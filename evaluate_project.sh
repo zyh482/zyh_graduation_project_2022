@@ -7,11 +7,12 @@ python3 -c "import torch; print(torch.__version__)"
 src=en
 tgt=de
 bedropout=0.3
+mode='sample'
 hidden_dim=1000
 bias_dim=512
 ARCH=transformer_s3_iwslt_de_en
 DATAPATH=data-bin/iwslt14.tokenized.en-de
-SAVEDIR=checkpoints/iwed_${src}_${tgt}_${bedropout}_sample
+SAVEDIR=checkpoints/iwed_${src}_${tgt}_${bedropout}_${mode}
 
 CUDA_VISIBLE_DEVICES=6 python generate.py $DATAPATH \
        --path $SAVEDIR/checkpoint_nmt.pt \

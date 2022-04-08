@@ -19,6 +19,7 @@ from fairseq import utils
 from fairseq.data import Dictionary
 from fairseq.models import FairseqDecoder, FairseqEncoder
 from project_model import ProjectModel
+from vae_project_model import VAEProjectModel
 
 
 class BaseFairseqModel(nn.Module):
@@ -309,7 +310,7 @@ class FairseqEncoderVaeDecoderModel(BaseFairseqModel):
         # self.reset_parameters()
         assert isinstance(self.encoder, FairseqEncoder)
         assert isinstance(self.decoder, FairseqDecoder)
-        assert isinstance(self.project, ProjectModel)
+        assert isinstance(self.project, VAEProjectModel)
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.trans_weight)

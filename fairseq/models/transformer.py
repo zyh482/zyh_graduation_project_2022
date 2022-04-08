@@ -29,6 +29,7 @@ from fairseq.modules import (
 )
 from bert import BertTokenizer
 from project_model import ProjectModel
+from vae_project_model import VAEProjectModel
 
 DEFAULT_MAX_SOURCE_POSITIONS = 1024
 DEFAULT_MAX_TARGET_POSITIONS = 1024
@@ -432,6 +433,11 @@ class TransformerS3Model(FairseqEncoderVaeDecoderModel):
                                  'Must be used with adaptive_loss criterion'),
         parser.add_argument('--adaptive-softmax-dropout', type=float, metavar='D',
                             help='sets adaptive softmax dropout for the tail projections')
+
+        parser.add_argument('--hidden-dim', default=768, type=int,
+                            help='hidden-state dim of project model')
+        parser.add_argument('--bias-dim', default=512, type=int,
+                            help='output dim of project model')
         # fmt: on
 
     @classmethod
@@ -501,7 +507,7 @@ class TransformerS3Model(FairseqEncoderVaeDecoderModel):
 
     @classmethod
     def build_project(cls, args):
-        return ProjectModel(args)
+        return VAEProjectModel(args)
 
     def forward(self, src_tokens, src_lengths, prev_output_tokens, bert_input, bias=None, **kwargs):
         """
@@ -530,7 +536,7 @@ class TransformerS3Model(FairseqEncoderVaeDecoderModel):
         bert_encoder_out, _ = self.bert_encoder(bert_input, output_all_encoded_layers=True,
                                                 attention_mask=~bert_encoder_padding_mask)
         bert_encoder_out = bert_encoder_out[self.bert_output_layer]
-        bias = self.project(bert_encoder_out)
+        bias, mu, logvar = self.project(bert_encoder_out)
         if self.mask_cls_sep:
             bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.cls())
             bert_encoder_padding_mask += bert_input.eq(self.berttokenizer.sep())
@@ -542,7 +548,7 @@ class TransformerS3Model(FairseqEncoderVaeDecoderModel):
         encoder_out = self.encoder(src_tokens, src_lengths=src_lengths, bert_encoder_out=bert_encoder_out)
         decoder_out = self.decoder(prev_output_tokens, encoder_out=encoder_out, bert_encoder_out=bert_encoder_out,
                                    bias=bias, **kwargs)
-        return decoder_out
+        return decoder_out, mu, logvar
 
 
 @register_model('transformerstack')
