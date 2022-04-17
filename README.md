@@ -62,6 +62,13 @@ pip install --editable .
   ```shell
   bash evaluate_vae.sh
   ```
+
+### 交互翻译
+- #### 启动服务
+  ```shell
+  bash inter_entroypoint.sh
+  ```
+
   
 ## 参考文献
 ```

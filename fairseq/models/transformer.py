@@ -438,6 +438,8 @@ class TransformerS3Model(FairseqEncoderVaeDecoderModel):
                             help='hidden-state dim of project model')
         parser.add_argument('--bias-dim', default=512, type=int,
                             help='output dim of project model')
+        parser.add_argument('--bias-gates', default=[1, 1, 1], nargs='+', type=int,
+                            help='control the positions to add bias')
         # fmt: on
 
     @classmethod
@@ -1001,6 +1003,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         bert_gates = [x == 1 for x in bert_gates]
         assert len(bert_gates) == args.decoder_layers
         print('bert_gates', bert_gates)
+        bias_gates = getattr(args, 'bias_gates', [1, 1, 1])
+        self.bias_gates = [x == 1 for x in bias_gates]
+        assert len(self.bias_gates) == 3
+        print('bias_gates', self.bias_gates)
+
         self.layers = nn.ModuleList([])
         decoder_no_bert = getattr(args, 'decoder_no_bert', False)
         if decoder_no_bert:
@@ -1010,7 +1017,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             ])
         else:
             self.layers.extend([
-                TransformerDecoderLayer(args, no_encoder_attn, bert_gate=bert_gates[i])
+                TransformerDecoderLayer(args, no_encoder_attn, bert_gate=bert_gates[i], bias_gate=self.bias_gates[1])
                 for i in range(args.decoder_layers)
             ])
 
@@ -1095,9 +1102,10 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             bias = torch.zeros_like(x).to(x.device)
         assert bias.shape == x.shape or bias.shape == x.shape[-2:], \
             f'Unmatched bias size {bias.shape}, while x size {x.shape}'
-        x = x + bias
-        attn = None
+        if self.bias_gates[0]:
+            x = x + bias
 
+        attn = None
         inner_states = [x]
 
         # decoder layers
@@ -1117,7 +1125,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.layer_norm:
             x = self.layer_norm(x)
 
-        x = x + bias
+        if self.bias_gates[2]:
+            x = x + bias
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
 
@@ -1620,7 +1629,7 @@ class TransformerDecoderLayer(nn.Module):
             (default: False).
     """
 
-    def __init__(self, args, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False, bert_gate=True):
+    def __init__(self, args, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False, bert_gate=True, bias_gate=False):
         super().__init__()
         self.embed_dim = args.decoder_embed_dim
         self.self_attn = MultiheadAttention(
@@ -1682,6 +1691,7 @@ class TransformerDecoderLayer(nn.Module):
             self.bert_ratio = 0.
             self.encoder_bert_dropout = False
             self.encoder_bert_mixup = False
+        self.bias_gate = bias_gate
 
     def prepare_for_onnx_export_(self):
         self.onnx_trace = True
@@ -1729,11 +1739,12 @@ class TransformerDecoderLayer(nn.Module):
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        if bias is None:
-            bias = torch.zeros_like(x).to(x.device)
-        assert x.shape == bias.shape or bias.shape == x.shape[
-                                                      -2:], f'Unmatched bias shape {bias.shape} with x shape {x.shape}'
-        x = residual + x + bias
+        if self.bias_gate:
+            if bias is None:
+                bias = torch.zeros_like(x).to(x.device)
+            assert x.shape == bias.shape or bias.shape == x.shape[-2:], f'Unmatched bias shape {bias.shape} with x shape {x.shape}'
+            x = x + bias
+        x = residual + x
         x = self.maybe_layer_norm(self.self_attn_layer_norm, x, after=True)
 
         if self.encoder_attn is not None:
